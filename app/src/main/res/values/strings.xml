@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">RAGnarok</string>
+    <string name="nacisnij_przycisk_i_mow">Naciśnij przycisk i mów</string>
+    <string name="mow">Mów</string>
+    <string name="nowa_rozmowa">Nowa rozmowa</string>
+    <string name="blad_rozpoznawania_mowy">Błąd rozpoznawania mowy</string>
+    <string name="nie_rozpoznano_mowy">Nie rozpoznano mowy</string>
+    <string name="post_request_failed">POST request failed: %1$s</string>
+    <string name="error">Error: %1$s - %2$s</string>
+    <string name="ropoczeto_nowa_rozmowe">Ropoczęto nową rozmowę</string>
+</resources>
