@@ -27,6 +27,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     private lateinit var textView: TextView
@@ -34,7 +35,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var forgetButton: Button
     private lateinit var speechRecognizer: SpeechRecognizer
     private var mediaPlayer: MediaPlayer? = null
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
     private var conversationId: String? = null
     private var baseUrl: String? = "http://192.168.20.55:4000"
 
