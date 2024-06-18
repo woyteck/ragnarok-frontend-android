@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
     private var conversationId: String? = null
-    private var baseUrl: String? = "http://192.168.20.55:4000"
+    private var baseUrl: String? = "http://home.woyteck.pl:4000"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
