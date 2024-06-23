@@ -3,30 +3,38 @@ package pl.woyteck.ragnarok
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Environment
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
-import androidx.activity.ComponentActivity
-import android.widget.Button
-import android.widget.TextView
 import android.speech.SpeechRecognizer
+import android.util.Log
 import android.view.MotionEvent
 import android.view.animation.ScaleAnimation
+import android.widget.Button
+import android.widget.TextView
+import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.InputStream
+import java.util.Base64
+import java.util.LinkedList
+import java.util.Queue
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
@@ -34,13 +42,32 @@ class MainActivity : ComponentActivity() {
     private lateinit var button: Button
     private lateinit var forgetButton: Button
     private lateinit var speechRecognizer: SpeechRecognizer
-    private var mediaPlayer: MediaPlayer? = null
+
+    private val mediaPlayer = MediaPlayer()
+    private val audioQueue: Queue<File> = LinkedList()
+    private var isMediaPlayerPrepared = false
+    private var isPreparing = false
+    private var fileCounter = 1
+
     private val client = OkHttpClient.Builder()
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
     private var conversationId: String? = null
-    private var baseUrl: String? = "http://home.woyteck.pl:4000"
+    private var apiBaseUrl: String = "http://192.168.20.55:4000"
+    private var baseUrl: String = "ws://192.168.20.55:8080/ws"
+    private lateinit var webSocket: WebSocket
+
+    init {
+        mediaPlayer.setOnPreparedListener {
+            isMediaPlayerPrepared = true
+            mediaPlayer.start()
+        }
+        mediaPlayer.setOnCompletionListener {
+            onAudioCompletion()
+        }
+        mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,8 +94,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        getConversationId()
-
         forgetButton.setOnClickListener {
             conversationId = null
             getConversationId()
@@ -78,6 +103,30 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
         }
+
+        getConversationId()
+        initiateWebSocket()
+    }
+
+    private fun initiateWebSocket() {
+        val request = Request.Builder().url(baseUrl).build()
+        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                runOnUiThread {
+                    textView.text = "Connected to websocket server"
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                handleServerResponse(text)
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                runOnUiThread {
+                    textView.text = "Websocket connection error"
+                }
+            }
+        })
     }
 
     private fun startListening() {
@@ -97,7 +146,7 @@ class MainActivity : ComponentActivity() {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val recognizedText = matches?.get(0) ?: getString(R.string.nie_rozpoznano_mowy)
                 textView.text = recognizedText
-                sendPostRequest(recognizedText)
+                sendWebSocketMessage(recognizedText)
             }
             override fun onPartialResults(partialResults: Bundle?) {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -122,9 +171,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun getConversationId() {
-        var url = "$baseUrl/api/v1/conversation"
         val request = Request.Builder()
-            .url(url)
+            .url("$apiBaseUrl/api/v1/conversation")
             .addHeader("Content-Type", "application/json")
             .build()
 
@@ -154,64 +202,65 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendPostRequest(recognizedText: String) {
-        val url = "$baseUrl/api/v1/conversation/$conversationId"
-
-        val json = JSONObject().put("text", recognizedText).toString()
-        val requestBody = json.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Content-Type", "application/json")
-            .post(requestBody)
-            .build()
-
-        CoroutineScope(Dispatchers.IO).launch {
-            client.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    runOnUiThread {
-                        textView.text = getString(R.string.post_request_failed, e.message)
-                    }
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    if (!response.isSuccessful) {
-                        val responseBody = response.body?.string() ?: "No response body"
-                        runOnUiThread {
-                            textView.text = getString(R.string.error, print(response.code), responseBody)
-                        }
-                    } else {
-                        val audioStream = response.body?.byteStream()
-                        audioStream?.let { playAudio(it) }
-                    }
-                }
-            })
-        }
+    private fun sendWebSocketMessage(recognizedText: String) {
+        val json = JSONObject().apply {
+            put("text", recognizedText)
+            put("conversationId", conversationId)
+        }.toString()
+        webSocket.send(json)
     }
 
-    private fun playAudio(inputStream: InputStream) {
-        val audioFile = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "response_audio.mp3")
+    private fun handleServerResponse(message: String) {
+        val jsonResponse = JSONObject(message)
+        val audioBase64 = jsonResponse.getString("audio")
+        val audioBytes = Base64.getDecoder().decode(audioBase64)
+        val audioFile = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "response_audio$fileCounter.mp3")
+        fileCounter++
+
         FileOutputStream(audioFile).use { output ->
-            inputStream.copyTo(output)
+            output.write(audioBytes)
         }
 
-        mediaPlayer?.release()
-        mediaPlayer = MediaPlayer().apply {
-            setDataSource(audioFile.absolutePath)
-            prepare()
-            start()
+        enqueueAudio(audioFile)
+    }
+
+    private fun enqueueAudio(audioData: File) {
+        audioQueue.offer(audioData)
+        if (audioQueue.size == 1 && !isMediaPlayerPrepared && !isPreparing) {
+            prepareAndStartMediaPlayer()
         }
     }
 
-//    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-//        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-//        if (requestCode == 1 && grantResults.isNotEmpty() && grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-//            textView.text = "Microphone permission is required to use this app"
-//        }
-//    }
+    private fun prepareAndStartMediaPlayer() {
+        if (audioQueue.isEmpty()) return
+
+        val audioFile = audioQueue.peek()
+        if (audioFile == null) {
+            return
+        }
+
+        try {
+            isPreparing = true
+            mediaPlayer.reset()
+            mediaPlayer.setDataSource(audioFile.absolutePath)
+            mediaPlayer.prepareAsync()
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun onAudioCompletion() {
+        isMediaPlayerPrepared = false
+        isPreparing = false
+        audioQueue.poll()
+        if (audioQueue.isNotEmpty()) {
+            prepareAndStartMediaPlayer()
+        }
+    }
 
     override fun onDestroy() {
         super.onDestroy()
         speechRecognizer.destroy()
-        mediaPlayer?.release()
+        webSocket.close(1000, "Activity destroyed")
     }
 }
