@@ -54,8 +54,8 @@ class MainActivity : ComponentActivity() {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
     private var conversationId: String? = null
-    private var apiBaseUrl: String = "http://192.168.20.55:4000"
-    private var baseUrl: String = "ws://192.168.20.55:8080/ws"
+    private var apiBaseUrl: String = "http://home.woyteck.pl:4000"
+    private var baseUrl: String = "ws://home.woyteck.pl:4001/ws"
     private lateinit var webSocket: WebSocket
 
     init {
